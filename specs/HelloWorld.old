@@ -9,13 +9,13 @@ begin
 end algorithm; *)
 
 
-\* BEGIN TRANSLATION (chksum(pcal) = "6aa8dd68" /\ chksum(tla) = "cf735deb")
+\* BEGIN TRANSLATION (chksum(pcal) = "ad099847" /\ chksum(tla) = "e2560377")
 VARIABLES x, pc
 
 vars == << x, pc >>
 
 Init == (* Global variables *)
-        /\ x \in 5..10000
+        /\ x \in 5..100
         /\ pc = "A"
 
 A == /\ pc = "A"

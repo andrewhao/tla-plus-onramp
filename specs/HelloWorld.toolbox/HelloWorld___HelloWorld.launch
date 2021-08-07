@@ -7,7 +7,7 @@
     <listAttribute key="modelCorrectnessProperties">
         <listEntry value="0Termination"/>
     </listAttribute>
-    <intAttribute key="modelEditorOpenTabs" value="8"/>
+    <intAttribute key="modelEditorOpenTabs" value="0"/>
     <intAttribute key="modelVersion" value="20191005"/>
     <stringAttribute key="specName" value="HelloWorld"/>
 </launchConfiguration>
