@@ -1,27 +1,21 @@
 ----------------------------- MODULE HelloWorld -----------------------------
-EXTENDS TLC, Integers
+EXTENDS TLC
 
 (* --algorithm HelloWorld
-variables x \in 5..10000;
 begin 
   A:
-    print {"Hello", "World", "Yo"}
+    print {"Hello", "World"}
 end algorithm; *)
+\* BEGIN TRANSLATION (chksum(pcal) = "8e0661a9" /\ chksum(tla) = "11327d74")
+VARIABLE pc
 
+vars == << pc >>
 
-\* BEGIN TRANSLATION (chksum(pcal) = "bcee40c3" /\ chksum(tla) = "78020012")
-VARIABLES x, pc
-
-vars == << x, pc >>
-
-Init == (* Global variables *)
-        /\ x \in 5..10000
-        /\ pc = "A"
+Init == /\ pc = "A"
 
 A == /\ pc = "A"
-     /\ PrintT({"Hello", "World", "Yo"})
+     /\ PrintT({"Hello", "World"})
      /\ pc' = "Done"
-     /\ x' = x
 
 (* Allow infinite stuttering to prevent deadlock on termination. *)
 Terminating == pc = "Done" /\ UNCHANGED vars
@@ -37,5 +31,5 @@ Termination == <>(pc = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Sun Oct 31 20:25:15 PDT 2021 by andrewhao
+\* Last modified Fri Aug 06 21:20:05 PDT 2021 by andrewhao
 \* Created Fri Aug 06 21:15:54 PDT 2021 by andrewhao

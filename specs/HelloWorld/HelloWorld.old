@@ -5,21 +5,21 @@ EXTENDS TLC, Integers
 variables x \in 5..10000;
 begin 
   A:
-    print {"Hello", "World", "Yo"}
+    print {"Hello", "World"}
 end algorithm; *)
 
 
-\* BEGIN TRANSLATION (chksum(pcal) = "bcee40c3" /\ chksum(tla) = "78020012")
+\* BEGIN TRANSLATION (chksum(pcal) = "ad099847" /\ chksum(tla) = "e2560377")
 VARIABLES x, pc
 
 vars == << x, pc >>
 
 Init == (* Global variables *)
-        /\ x \in 5..10000
+        /\ x \in 5..100
         /\ pc = "A"
 
 A == /\ pc = "A"
-     /\ PrintT({"Hello", "World", "Yo"})
+     /\ PrintT({"Hello", "World"})
      /\ pc' = "Done"
      /\ x' = x
 
@@ -37,5 +37,5 @@ Termination == <>(pc = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Sun Oct 31 20:25:15 PDT 2021 by andrewhao
+\* Last modified Fri Aug 06 21:24:37 PDT 2021 by andrewhao
 \* Created Fri Aug 06 21:15:54 PDT 2021 by andrewhao
