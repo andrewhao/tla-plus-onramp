@@ -4,7 +4,7 @@ EXTENDS TLC, Integers, Sequences
 
 variables
     queue = <<>>,
-    external_balance = 2,
+    external_balance = 1,
     internal_balance = 0;
 
 define
@@ -37,17 +37,17 @@ variable balance_to_restore;
 begin
     PollReversal:
     while TRUE do
-      await queue /= <<>>; \*if Len(queue) > 0 then
+      if Len(queue) > 0 then
       DoReversal:
          balance_to_restore := Head(queue);
          queue := Tail(queue);
          external_balance := external_balance + balance_to_restore;
-      \*end if;
+      end if;
     end while;
 end process;
  
 end algorithm;*)
-\* BEGIN TRANSLATION (chksum(pcal) = "4c3d467" /\ chksum(tla) = "9d920bf7")
+\* BEGIN TRANSLATION (chksum(pcal) = "115d6a12" /\ chksum(tla) = "c090f61f")
 CONSTANT defaultInitValue
 VARIABLES queue, external_balance, internal_balance, pc
 
@@ -64,7 +64,7 @@ ProcSet == (1..2) \cup {0}
 
 Init == (* Global variables *)
         /\ queue = <<>>
-        /\ external_balance = 2
+        /\ external_balance = 1
         /\ internal_balance = 0
         (* Process BankTransferAction *)
         /\ i = [self \in 1..2 |-> 0]
@@ -98,8 +98,9 @@ BankTransferAction(self) == ExternalTransfer(self)
                                \/ FailedInternalTransfer(self)
 
 PollReversal == /\ pc[0] = "PollReversal"
-                /\ queue /= <<>>
-                /\ pc' = [pc EXCEPT ![0] = "DoReversal"]
+                /\ IF Len(queue) > 0
+                      THEN /\ pc' = [pc EXCEPT ![0] = "DoReversal"]
+                      ELSE /\ pc' = [pc EXCEPT ![0] = "PollReversal"]
                 /\ UNCHANGED << queue, external_balance, internal_balance, i, 
                                 balance_to_restore >>
 
@@ -120,5 +121,5 @@ Spec == Init /\ [][Next]_vars
 \* END TRANSLATION 
 =============================================================================
 \* Modification History
-\* Last modified Tue Mar 08 23:20:18 PST 2022 by andrewhao
+\* Last modified Tue Mar 08 23:16:14 PST 2022 by andrewhao
 \* Created Wed Feb 23 22:30:47 PST 2022 by andrewhao
