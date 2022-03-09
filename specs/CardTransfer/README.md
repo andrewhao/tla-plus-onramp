@@ -16,46 +16,53 @@ In this exercise, imagine we are a bank, and we are serving an API request from 
 - We must guarantee that balances are kept consistent between our system and the external institutions. No money should be lost/created on either side (obviously).
 - The external service may fail to process the transaction for any reason (downtime, network partition, system error)
 - The internal transaction service may also fail to process the transaction for any reason (antifraud rules, domain logic, ratelimiting, network partitions)
+- The API request is synchronous, and must respond within 200ms @ p99
 
-Our current design works like this: 
+### The Happy Path
 
+We illustrate the system design using the happy path. Our mobile client calls an API gateway, which we use as a transaction coordinator.
 
+The API gateway makes 2 calls. First, it calls the external financial institution to initiate the transfer. If the transfer is successful, the API then turns around and pings the internal balance store service to note the transaction was a success.
 
-```
-Customer requests balance transfer, provides card number and PIN
-InternalSystem marks transaction start
-InternalSystem creates a CashOut action on ExternalSystem
-If response is CASHOUT_FAILURE:
-  Internal system fails the transaction
+(Note that this is not representative of a real world bank! This is a contrived, simplified example).
 
-[Else response is SUCCESS:]
-
-InternalSystem attempts to CreditInternalBalance
-If Operation FAILS:
-  InternalSystem marks transaction failed
-  API reponse to customer is FAILURE
-  InternalSystem queues a reversal action
-Else operation SUCCESS:
-  InternalSystem marks transaction success, and
-  User is credited extra card amount
-  API response to customer is SUCCESS
-```
-
-Flowchart:
+Because we need our API to be synchronous, the API coordinator blocks until both responses are success, before returning a success response to the client.
 
 ```mermaid
 sequenceDiagram
 autonumber
-OurMobileClient->>+OurAPIGateway: RedeemCard
-OurAPIGateway->>+ExternalFinancialInstitution: CashoutCardBalance
+OurMobileClient->>+OurAPIGateway: ApproveTransfer
+OurAPIGateway->>+ExternalFinancialInstitution: StartTransfer
 ExternalFinancialInstitution->>-OurAPIGateway: SUCCESS
-OurAPIGateway->>+OurInternalBalanceStore: CreditUserBalance
+OurAPIGateway->>+OurInternalBalanceStore: UpdateUserBalance
+OurInternalBalanceStore->>-OurAPIGateway: SUCCESS
+OurAPIGateway->>-OurMobileClient: SUCCESS
+```
+
+### Internal API error with compensating transaction
+
+Of course, we know that errors can crop up in the real world. If the call to either service borks, we will need a way to either retry or fail gracefully. Here, we consider the use case where our internal API service crashes.
+
+We consult with the team and decide that if the API service crashes for any reason, we will want to undo the transaction in the external financial institution with a compensating transaction. We will throw this work onto an external queue as soon as an error occurs.
+
+```mermaid
+sequenceDiagram
+autonumber
+OurMobileClient->>+OurAPIGateway: ApproveTransfer
+OurAPIGateway->>+ExternalFinancialInstitution: StartTransfer
+ExternalFinancialInstitution->>-OurAPIGateway: SUCCESS
+OurAPIGateway->>+OurInternalBalanceStore: UpdateUserBalance
 OurInternalBalanceStore->>-OurAPIGateway: FAILED
 OurAPIGateway--)BackgroundWorker: Enqueue Reversal
 Note over OurAPIGateway,BackgroundWorker: Compensating transaction kicks off after a failure
 OurAPIGateway->>-OurMobileClient: FAILED
-BackgroundWorker->>+ExternalFinancialInstitution: UndoCashoutCardBalance
+BackgroundWorker->>+ExternalFinancialInstitution: UndoStartTransfer
 ExternalFinancialInstitution->>-BackgroundWorker: SUCCESS
 ```
 
-This is 
+This should work, right?
+
+## Enter formal specifications!
+
+OK, let's try to model this behavior as a formal TLA+ spec.
+
