@@ -18,6 +18,7 @@ begin
 ApproveTransfer:
     while i < 100 do \* Sequential process of 5 "tries" from a single user
     
+    await queue = <<>>;
     ExternalTransfer:
         \* Call the external service to transfer. For simplicity's sake, we assume
         \* it always succeeds
@@ -54,7 +55,7 @@ begin
 end process;
  
 end algorithm;*)
-\* BEGIN TRANSLATION (chksum(pcal) = "52b929f5" /\ chksum(tla) = "3d1b6710")
+\* BEGIN TRANSLATION (chksum(pcal) = "35e41baf" /\ chksum(tla) = "4600ad6a")
 CONSTANT defaultInitValue
 VARIABLES queue, external_balance, internal_balance, pc
 
@@ -82,7 +83,8 @@ Init == (* Global variables *)
 
 ApproveTransfer == /\ pc[1] = "ApproveTransfer"
                    /\ IF i < 100
-                         THEN /\ pc' = [pc EXCEPT ![1] = "ExternalTransfer"]
+                         THEN /\ queue = <<>>
+                              /\ pc' = [pc EXCEPT ![1] = "ExternalTransfer"]
                          ELSE /\ pc' = [pc EXCEPT ![1] = "Done"]
                    /\ UNCHANGED << queue, external_balance, internal_balance, 
                                    i, balance_to_restore >>
@@ -139,5 +141,5 @@ Spec == Init /\ [][Next]_vars
 \* END TRANSLATION 
 =============================================================================
 \* Modification History
-\* Last modified Tue Mar 08 23:11:42 PST 2022 by andrewhao
+\* Last modified Tue Mar 08 23:02:48 PST 2022 by andrewhao
 \* Created Wed Feb 23 22:30:47 PST 2022 by andrewhao

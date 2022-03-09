@@ -17,7 +17,6 @@ variables i = 0;
 begin 
 ApproveTransfer:
     while i < 100 do \* Sequential process of 5 "tries" from a single user
-    
     ExternalTransfer:
         \* Call the external service to transfer. For simplicity's sake, we assume
         \* it always succeeds
@@ -139,5 +138,5 @@ Spec == Init /\ [][Next]_vars
 \* END TRANSLATION 
 =============================================================================
 \* Modification History
-\* Last modified Tue Mar 08 23:11:42 PST 2022 by andrewhao
+\* Last modified Tue Mar 08 23:00:17 PST 2022 by andrewhao
 \* Created Wed Feb 23 22:30:47 PST 2022 by andrewhao

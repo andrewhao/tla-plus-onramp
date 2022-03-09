@@ -17,7 +17,6 @@ variables i = 0;
 begin 
 ApproveTransfer:
     while i < 100 do \* Sequential process of 5 "tries" from a single user
-    
     ExternalTransfer:
         \* Call the external service to transfer. For simplicity's sake, we assume
         \* it always succeeds
@@ -37,24 +36,25 @@ ApproveTransfer:
     IncrCounterTryAgain:
             i := i + 1;
     end while;
+
+
 end process;
 
 process ReversalWorker = 0
 variable balance_to_restore;
 begin
-    PollReversal:
+    DoReversal:
     while TRUE do
       if Len(queue) > 0 then
-      DoReversal:
-         balance_to_restore := Head(queue);
-         queue := Tail(queue);
-         external_balance := external_balance + balance_to_restore;
+      balance_to_restore := Head(queue);
+      queue := Tail(queue);
+      external_balance := external_balance + balance_to_restore;
       end if;
     end while;
 end process;
  
 end algorithm;*)
-\* BEGIN TRANSLATION (chksum(pcal) = "52b929f5" /\ chksum(tla) = "3d1b6710")
+\* BEGIN TRANSLATION (chksum(pcal) = "b112afef" /\ chksum(tla) = "2bcde370")
 CONSTANT defaultInitValue
 VARIABLES queue, external_balance, internal_balance, pc
 
@@ -78,7 +78,7 @@ Init == (* Global variables *)
         (* Process ReversalWorker *)
         /\ balance_to_restore = defaultInitValue
         /\ pc = [self \in ProcSet |-> CASE self = 1 -> "ApproveTransfer"
-                                        [] self = 0 -> "PollReversal"]
+                                        [] self = 0 -> "DoReversal"]
 
 ApproveTransfer == /\ pc[1] = "ApproveTransfer"
                    /\ IF i < 100
@@ -116,21 +116,18 @@ BankTransferAction == ApproveTransfer \/ ExternalTransfer
                          \/ SuccessfulInternalTransfer
                          \/ FailedInternalTransfer \/ IncrCounterTryAgain
 
-PollReversal == /\ pc[0] = "PollReversal"
-                /\ IF Len(queue) > 0
-                      THEN /\ pc' = [pc EXCEPT ![0] = "DoReversal"]
-                      ELSE /\ pc' = [pc EXCEPT ![0] = "PollReversal"]
-                /\ UNCHANGED << queue, external_balance, internal_balance, i, 
-                                balance_to_restore >>
-
 DoReversal == /\ pc[0] = "DoReversal"
-              /\ balance_to_restore' = Head(queue)
-              /\ queue' = Tail(queue)
-              /\ external_balance' = external_balance + balance_to_restore'
-              /\ pc' = [pc EXCEPT ![0] = "PollReversal"]
+              /\ IF Len(queue) > 0
+                    THEN /\ balance_to_restore' = Head(queue)
+                         /\ queue' = Tail(queue)
+                         /\ external_balance' = external_balance + balance_to_restore'
+                    ELSE /\ TRUE
+                         /\ UNCHANGED << queue, external_balance, 
+                                         balance_to_restore >>
+              /\ pc' = [pc EXCEPT ![0] = "DoReversal"]
               /\ UNCHANGED << internal_balance, i >>
 
-ReversalWorker == PollReversal \/ DoReversal
+ReversalWorker == DoReversal
 
 Next == BankTransferAction \/ ReversalWorker
 
@@ -139,5 +136,5 @@ Spec == Init /\ [][Next]_vars
 \* END TRANSLATION 
 =============================================================================
 \* Modification History
-\* Last modified Tue Mar 08 23:11:42 PST 2022 by andrewhao
+\* Last modified Tue Mar 08 22:57:26 PST 2022 by andrewhao
 \* Created Wed Feb 23 22:30:47 PST 2022 by andrewhao
