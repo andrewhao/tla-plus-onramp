@@ -78,6 +78,96 @@ This should work, right?
 
 ## Enter formal specifications!
 
-OK, let's try to model this behavior as a formal TLA+ spec.
+OK, let's try to model this behavior as a formal TLA+ spec. I'll write out how the spec would look, and we'll go through it line by line:
 
+```tla
+EXTENDS TLC, Integers, Sequences
+(*--algorithm transfer_bank_balance
 
+variables
+    queue = <<>>,
+    reversal_in_progress = FALSE,
+    transfer_amount = 5,
+    button_mash_attempts = 0,
+    external_balance = 10,
+    internal_balance = 0;
+
+define
+    NeverOverdraft == external_balance >= 0
+    EventuallyConsistentTransfer == <>[](external_balance + internal_balance = 10)
+end define;
+
+\* This models the API endpoint coordinator
+fair process BankTransferAction = "BankTransferAction"
+begin
+    ExternalTransfer:
+        external_balance := external_balance - transfer_amount;
+    InternalTransfer:
+        either
+          internal_balance := internal_balance + transfer_amount;
+        or
+          \* Internal system error!
+          \* Enqueue the compensating reversal transaction.
+          queue := Append(queue, transfer_amount);
+          reversal_in_progress := TRUE;
+
+          \* The user is impatient! Their transfer must go through. They button mash (up to 3 times)..
+          UserButtonMash: 
+\*            await reversal_in_progress = FALSE;         
+            if (button_mash_attempts < 3) then
+                button_mash_attempts := button_mash_attempts + 1;
+
+                \* Start from the top and do the external transfer
+                goto ExternalTransfer;
+            end if;
+        end either;
+end process;
+
+\* This models an async task runner that will run a
+\* a reversal compensating transaction. It uses
+\* a queue to process work.
+fair process ReversalWorker = "ReversalWorker"
+variable balance_to_restore = 0;
+begin
+    DoReversal:
+      while TRUE do
+         await queue /= <<>>;
+         balance_to_restore := Head(queue);
+         queue := Tail(queue);
+         external_balance := external_balance + balance_to_restore;
+         reversal_in_progress := FALSE;
+      end while;
+
+end process;
+ 
+end algorithm;*)
+```
+
+Whew, ok! That's a lot. Let's go through it line by line:
+
+```tla
+EXTENDS TLC, Integers, Sequences
+(*--algorithm transfer_bank_balance
+```
+
+These are program headers. These define the modules we should import into the global namespace of our model.
+
+The `(*--algorithm ...` preamble marks the beginning of the PlusCal script (bookended by `end algorithm;*)` at the end of the program.
+
+Next up, we declare variables and operators:
+
+```tla
+\* These are global variables
+variables
+    queue = <<>>,
+    reversal_in_progress = FALSE,
+    transfer_amount = 5,
+    button_mash_attempts = 0,
+    external_balance = 10,
+    internal_balance = 0;
+
+define
+    NeverOverdraft == external_balance >= 0
+    EventuallyConsistentTransfer == <>[](external_balance + internal_balance = 10)
+end define;
+```
