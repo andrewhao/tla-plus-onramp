@@ -74,16 +74,35 @@ BackgroundWorker->>+ExternalFinancialInstitution: UndoStartTransfer
 ExternalFinancialInstitution->>-BackgroundWorker: SUCCESS
 ```
 
-This should work, right?
+But wait! We see that there's a bug. For there's a race condition when users "button mash" after they hit an error dialogue in the mobile client and immediately retry their request again!
+
+
+```mermaid
+sequenceDiagram
+autonumber
+OurMobileClient->>+OurAPIGateway: ApproveTransfer
+OurAPIGateway->>+ExternalFinancialInstitution: StartTransfer
+ExternalFinancialInstitution->>-OurAPIGateway: SUCCESS
+OurAPIGateway->>+OurInternalBalanceStore: UpdateUserBalance
+OurInternalBalanceStore->>-OurAPIGateway: FAILED
+OurAPIGateway--)BackgroundWorker: Enqueue Reversal
+OurAPIGateway->>-OurMobileClient: FAILED
+OurMobileClient->>+OurAPIGateway: ApproveTransfer
+OurAPIGateway->>+ExternalFinancialInstitution: StartTransfer
+ExternalFinancialInstitution->>-OurAPIGateway: FAILED
+OurAPIGateway->>-OurMobileClient: FAILED
+Note over OurMobileClient,OurAPIGateway: Button mashed request winds up failing because there are no funds in account (race condition)
+BackgroundWorker->>+ExternalFinancialInstitution: UndoStartTransfer
+ExternalFinancialInstitution->>-BackgroundWorker: SUCCESS
+```
+
+This will fail.
 
 ## Enter formal specifications!
 
 OK, let's try to model this behavior as a formal TLA+ spec. I'll write out how the spec would look, and we'll go through it line by line:
 
 ```tla
-EXTENDS TLC, Integers, Sequences
-(*--algorithm transfer_bank_balance
-
 variables
     queue = <<>>,
     reversal_in_progress = FALSE,
@@ -139,28 +158,16 @@ begin
       end while;
 
 end process;
- 
-end algorithm;*)
 ```
 
 Whew, ok! That's a lot. Let's go through it line by line:
 
-```tla
-EXTENDS TLC, Integers, Sequences
-(*--algorithm transfer_bank_balance
-```
-
-These are program headers. These define the modules we should import into the global namespace of our model.
-
-The `(*--algorithm ...` preamble marks the beginning of the PlusCal script (bookended by `end algorithm;*)` at the end of the program.
-
-Next up, we declare variables and operators:
+First up, we declare variables and operators:
 
 ```tla
 \* These are global variables
 variables
     queue = <<>>,
-    reversal_in_progress = FALSE,
     transfer_amount = 5,
     button_mash_attempts = 0,
     external_balance = 10,
@@ -171,3 +178,44 @@ define
     EventuallyConsistentTransfer == <>[](external_balance + internal_balance = 10)
 end define;
 ```
+
+There are two main blocks here, the `variables` block and the `define` block. The variables defined here track values that will be used globally throughout the model. The operators in the `define` block are properties that the model checker will use to make sure invariants and temporal properties hold true throughout the lifecycle of the model.
+
+It's imporant to note the properties defined here in the spec:
+
+- `NoOverdrafts` is checked on every state combination, ensuring that there cannot be a scenario where the external financial institution is asked to transfer more money than is in its account.
+- `EventuallyConsistentTransfer` is a *Temporal Property* that checks whether the system always eventually converges on the condition listed below - that external + internal balance equals $10, the starting amount. We are essentially guaranteeing that we cannot unintentially create or lose any money between our institutions.
+
+Next up, there are two `process` blocks being defined here, representing the two internal systems whose interactions we are modeling here.
+
+The first `process` is the API coordinator. Let's walk through the code:
+
+```tla
+fair process BankTransferAction = "BankTransferAction"
+begin
+    ExternalTransfer:
+        external_balance := external_balance - transfer_amount;
+    InternalTransfer:
+        either
+          internal_balance := internal_balance + transfer_amount;
+        or
+          \* Internal system error!
+          \* Enqueue the compensating reversal transaction.
+          queue := Append(queue, transfer_amount);
+          reversal_in_progress := TRUE;
+
+          \* The user is impatient! Their transfer must go through. They button mash (up to 3 times)..
+          UserButtonMash: 
+\*            await reversal_in_progress = FALSE;         
+            if (button_mash_attempts < 3) then
+                button_mash_attempts := button_mash_attempts + 1;
+
+                \* Start from the top and do the external transfer
+                goto ExternalTransfer;
+            end if;
+        end either;
+end process;
+```
+
+Each major action is marked by a `label` - so note the labels `ExternalTransfer`, `InternalTransfer`, and `UserButtonMash`. These correspond with various phases of our system sequence diagram:
+
