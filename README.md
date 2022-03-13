@@ -14,9 +14,9 @@ If you want, feel free to get the [VSCode extension](https://marketplace.visuals
 
 ## Example 1: Transaction Isolation problem
 
-What might happen if our database did not correctly implement transaction isolation? In the book *Designing Data-Intensive Applications*, the Transactions chapter illustrates a scenario where read isolation is not correctly implemented in the database, leading to bad outcomes.
+In the book *Designing Data-Intensive Applications*, the Transactions chapter illustrates a scenario where read isolation is not correctly implemented in the database, leading to *dirty reads* - simultaneous queries may be able to read dirty data from complex multi-statement operations - leading to bad outcomes.
 
-Let's say we are a bank where a user attempts to transfer money between two accounts, and a separate query is being run by an auditor.
+Let's say we are a bank where a user attempts to transfer money between two accounts, and a separate query is being run by an auditor who wants to ensure that the bank software is working correctly and no funny money business is happening:
 
 ```mermaid
 sequenceDiagram
@@ -27,7 +27,11 @@ Auditor->>Account2: Query Balance
 User->>Account2: Subtract $500
 ```
 
-Assuming both accounts have initial values of $1000, the User's transfer completes successfully, transferring $500 from Account1 to Account2, maintaining the correct money flow (`Account1 + Account2 = $1000`). However, the Auditor has a different view of the world, seeing that $500 has materialized out of thin air into Account 1 (`Account1 + Account2 = $1500`)!
+Alas, our system was implemented a bit naively, and we can see that the application makes two calls to the database, debiting from Account1 and crediting to Account2 in two separate statements. 
+
+Assuming both accounts    have initial values of $1000, the User's transfer completes successfully, transferring $500 from Account1 to Account2, maintaining the correct money flow (`Account1 + Account2 = $1000`).
+
+However, the Auditor has had the unfortunate timing to look at the state of the world in between the two user operations and has a different view of the world, seeing that $500 has materialized out of thin air into Account 1 (`Account1 + Account2 = $1500`)!
 
 Let's model this behavior as a TLA PlusCal algorithm:
 
@@ -40,21 +44,29 @@ variables
 process User = "user"
 begin
   StartUserTransfer:
-    account_1 := account_1 + transfer_amount
+    account1 := account1 + transfer_amount;
   FinalizeUserTransfer:
-    account_2 := account_2 - transfer_amount
+    account2 := account2 - transfer_amount;
+end process;
 
 process Auditor = "auditor"
 begin
   DoAudit:
-    assert account_1 + account_2 = 2000
+    assert account1 + account2 = 2000
+end process;
 ```
 
 High level explanation - the two `process` blocks model two independent activities happening here - the user initiating the transfer and the auditor running the query.
 
 This will blow up! The TLA model checker will compute all possible computation states between the two processes as delineated by the statements inside the `StartUserTransfer`, `FinalizeUserTransfer`, and `DoAudit` labeled statement groups, including when the auditor runs before, during, and after the user's inter-account transfer.
 
-Let's say we want to fix it. From the point of the algorithm, we will move both transfers to within the same label to tell the model checker "these two operations are atomic", which would represent the work needed to make the system implement read transaction isolation.
+![](A diagram showing an error message of this proof failing)
+
+### How do we fix this?
+
+Clearly, this is incorrect. We will need to ensure that the database is not able to allow other queries to read values happening from within a transaction. So here, we say "OK, we're going to wrap up these statements in a `TRANSACTION` block".
+
+From the point of the algorithm, we will move both transfers to within the same label to tell the model checker "these two operations are atomic":
 
 ```
 begin
@@ -66,11 +78,10 @@ begin
 
 Run the model checker again - it passes.
 
-So obviously this is a toy example, and glossing over the work needed to ensure atomicity. In this case, we will want to force the database to implement transactional isolation (read isolation). Doing that is beyond the scope of this article (but almost all databases do this anyways by default). 
 
 ## Example 2: Bank Transfer problem
 
-This is a simplified distributed system coordination problem.
+This is a distributed system transaction orchestration problem.
 
 In this exercise, imagine we are a bank, and we are serving an API request from our banking mobile app to initiate a bank transfer from an external financial institution to the user's account.
 
@@ -244,34 +255,53 @@ It's imporant to note the properties defined here in the spec:
 
 Next up, there are two `process` blocks being defined here, representing the two internal systems whose interactions we are modeling here.
 
-The first `process` is the API coordinator. Let's walk through the code:
+The first `process` is the API coordinator. Inside this coordinator, each action is marked by a `label` - so note the labels `ExternalTransfer`, `InternalTransfer`, and `UserButtonMash`. These correspond with various phases of our system sequence diagram. Let's walk through the code:
 
 ```tla
 fair process BankTransferAction = "BankTransferAction"
 begin
     ExternalTransfer:
         external_balance := external_balance - transfer_amount;
-    InternalTransfer:
+        ...
+```
+
+This is fairly self-explanatory - the system is set up to first call the external institution and tell them to withdraw the money. **For simplicity's sake, we assume it always is successful**. (It obviously won't be, and we have the perfect tool to model failure scenarios around that!)
+
+```tla
+ InternalTransfer:
         either
           internal_balance := internal_balance + transfer_amount;
         or
           \* Internal system error!
-          \* Enqueue the compensating reversal transaction.
+          \* The system will enqueue the compensating reversal transaction.
           queue := Append(queue, transfer_amount);
           reversal_in_progress := TRUE;
+          ...
+        end either;
 
-          \* The user is impatient! Their transfer must go through. They button mash (up to 3 times)..
+```
+The next label is interesting. We use an `either...or` control structure to tell the model checker that there is possibly branching logic here (in this case, there is a success case and a failure case). Both these branches will be exhaustively explored.
+
+In the successful case, we observe that the internal API is called successfully and the balance is correctly stored. However, the failure case will have us enqueue a compensating transaction (a "reversal") that will be processed by an asynchronous worker.
+
+```tla
+          \* The user is impatient! Their transfer must go through.
+          \* They button mash (up to 3 times)....
           UserButtonMash: 
 \*            await reversal_in_progress = FALSE;         
             if (button_mash_attempts < 3) then
+                \* But the UI blocks them from re-submitting until the transaction
+                \* has finished being reversed/compensated.
                 button_mash_attempts := button_mash_attempts + 1;
-
-                \* Start from the top and do the external transfer
+     
                 goto ExternalTransfer;
             end if;
-        end either;
-end process;
 ```
 
-Each major action is marked by a `label` - so note the labels `ExternalTransfer`, `InternalTransfer`, and `UserButtonMash`. These correspond with various phases of our system sequence diagram:
+Ooh, the user, the user. You can always count on the user to do something unexpected. So now while the user is enqueuing the compensating transaction, our poor user is confused and is now retrying the original transaction (aka "button mashing") the UI button in hopes that it will go through. Will it succeed?
 
+Note that the way I've built the spec, I'm specifying a finite limit to the number of user retries, if only to make sure the program will eventually terminate.
+
+Finally, observe the `goto ExternalTransfer` statement on Line 10. This basically tells the model checker to jump to the `ExternalTransfer:` label - i.e. the top of the program to re-execute the process all over again.
+
+(Author's note: I haven't finished this yet, but thought I'd push this up as a work in progress. Do you see the error? Are your spidey senses tingling here? More to come!)
