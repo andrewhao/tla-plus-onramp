@@ -12,7 +12,63 @@ Install the [TLA+ Toolbox software](http://lamport.azurewebsites.net/tla/toolbox
 
 If you want, feel free to get the [VSCode extension](https://marketplace.visualstudio.com/items?itemName=alygin.vscode-tlaplus). I find the modern tooling environment here more familiar, albeit less powerful.
 
-## Example 1: Bank Transfer problem
+## Example 1: Transaction Isolation problem
+
+What might happen if our database did not correctly implement transaction isolation? In the book *Designing Data-Intensive Applications*, the Transactions chapter illustrates a scenario where read isolation is not correctly implemented in the database, leading to bad outcomes.
+
+Let's say we are a bank where a user attempts to transfer money between two accounts, and a separate query is being run by an auditor.
+
+```mermaid
+sequenceDiagram
+autonumber
+User->>Account1: Add $500
+Auditor->>Account1: Query Balance
+Auditor->>Account2: Query Balance
+User->>Account2: Subtract $500
+```
+
+Assuming both accounts have initial values of $1000, the User's transfer completes successfully, transferring $500 from Account1 to Account2, maintaining the correct money flow (`Account1 + Account2 = $1000`). However, the Auditor has a different view of the world, seeing that $500 has materialized out of thin air into Account 1 (`Account1 + Account2 = $1500`)!
+
+Let's model this behavior as a TLA PlusCal algorithm:
+
+```tla
+variables 
+  transfer_amount = 500,
+  account1 = 1000,
+  account2 = 1000;
+
+process User = "user"
+begin
+  StartUserTransfer:
+    account_1 := account_1 + transfer_amount
+  FinalizeUserTransfer:
+    account_2 := account_2 - transfer_amount
+
+process Auditor = "auditor"
+begin
+  DoAudit:
+    assert account_1 + account_2 = 2000
+```
+
+High level explanation - the two `process` blocks model two independent activities happening here - the user initiating the transfer and the auditor running the query.
+
+This will blow up! The TLA model checker will compute all possible computation states between the two processes as delineated by the statements inside the `StartUserTransfer`, `FinalizeUserTransfer`, and `DoAudit` labeled statement groups, including when the auditor runs before, during, and after the user's inter-account transfer.
+
+Let's say we want to fix it. From the point of the algorithm, we will move both transfers to within the same label to tell the model checker "these two operations are atomic", which would represent the work needed to make the system implement read transaction isolation.
+
+```
+begin
+  DoUserTransfer:
+    account_1 := account_1 + transfer_amount
+    \* Collapse this transaction with the one above to make them atomic
+    account_2 := account_2 - transfer_amount
+```
+
+Run the model checker again - it passes.
+
+So obviously this is a toy example, and glossing over the work needed to ensure atomicity. In this case, we will want to force the database to implement transactional isolation (read isolation). Doing that is beyond the scope of this article (but almost all databases do this anyways by default). 
+
+## Example 2: Bank Transfer problem
 
 This is a simplified distributed system coordination problem.
 
@@ -45,7 +101,7 @@ Because we need our API to be synchronous, the API coordinator blocks until both
 ```mermaid
 sequenceDiagram
 autonumber
-OurMobileClient->>+OurAPIGateway: ApproveTransfer
+OurMobileClient->>+OurAPIGateway: SubmitTransfer
 OurAPIGateway->>+ExternalFinancialInstitution: StartTransfer
 ExternalFinancialInstitution->>-OurAPIGateway: SUCCESS
 OurAPIGateway->>+OurInternalBalanceStore: UpdateUserBalance
@@ -62,7 +118,7 @@ We consult with the team and decide that if the API service crashes for any reas
 ```mermaid
 sequenceDiagram
 autonumber
-OurMobileClient->>+OurAPIGateway: ApproveTransfer
+OurMobileClient->>+OurAPIGateway: SubmitTransfer
 OurAPIGateway->>+ExternalFinancialInstitution: StartTransfer
 ExternalFinancialInstitution->>-OurAPIGateway: SUCCESS
 OurAPIGateway->>+OurInternalBalanceStore: UpdateUserBalance
@@ -80,18 +136,18 @@ But wait! We see that there's a bug. For there's a race condition when users "bu
 ```mermaid
 sequenceDiagram
 autonumber
-OurMobileClient->>+OurAPIGateway: ApproveTransfer
+OurMobileClient->>+OurAPIGateway: SubmitTransfer
 OurAPIGateway->>+ExternalFinancialInstitution: StartTransfer
 ExternalFinancialInstitution->>-OurAPIGateway: SUCCESS
 OurAPIGateway->>+OurInternalBalanceStore: UpdateUserBalance
 OurInternalBalanceStore->>-OurAPIGateway: FAILED
 OurAPIGateway--)BackgroundWorker: Enqueue Reversal
 OurAPIGateway->>-OurMobileClient: FAILED
-OurMobileClient->>+OurAPIGateway: ApproveTransfer
+OurMobileClient->>+OurAPIGateway: SubmitTransfer
 OurAPIGateway->>+ExternalFinancialInstitution: StartTransfer
 ExternalFinancialInstitution->>-OurAPIGateway: FAILED
 OurAPIGateway->>-OurMobileClient: FAILED
-Note over OurMobileClient,OurAPIGateway: Button mashed request winds up failing because there are no funds in account (race condition)
+Note over OurMobileClient,OurAPIGateway: User's  re-submittal fails because there are no funds in account (race condition)
 BackgroundWorker->>+ExternalFinancialInstitution: UndoStartTransfer
 ExternalFinancialInstitution->>-BackgroundWorker: SUCCESS
 ```
